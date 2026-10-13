@@ -15,9 +15,14 @@
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
+#include <fcntl.h>
 #include <mutex>
 #include <string>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
+#ifdef __FreeBSD__
+#include <sys/mount.h>
+#endif
 #include <unistd.h>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -25,6 +30,9 @@
 extern "C" {
 int scePthreadCreate(void **, const void *, void *(*)(void *), void *, const char *);
 int scePthreadJoin(void *, void **);
+#ifdef __FreeBSD__
+int _fstatfs(int, struct statfs *);
+#endif
 }
 
 namespace prospero_model_download {
@@ -235,7 +243,9 @@ bool ensure_model_root() {
     return mkdir(prospero::model_root(), 0777) == 0 ||
            (stat(prospero::model_root(), &directory) == 0 && S_ISDIR(directory.st_mode));
 }
+bool storage_fault = false; // only the download worker writes this flag
 void storage_error(const char *operation) {
+    storage_fault = true;
     const int error = errno;
     char message[160];
     std::snprintf(message, sizeof(message), "%s: %s (%d).%s", operation,
@@ -245,6 +255,51 @@ void storage_error(const char *operation) {
                       : " Check available storage.");
     set_status(message);
     current.store(State::Failed);
+}
+
+bool enough_space(std::uint64_t bytes)
+{
+#ifdef __FreeBSD__
+    // libcompat's statfs executes a raw syscall from app memory, which PS5
+    // rejects with SYSTEM_ILLEGAL_FUNCTION_CALL. Use libkernel's entry instead.
+    struct statfs volume
+    {
+    };
+    const int descriptor = open(prospero::model_root(), O_RDONLY | O_DIRECTORY);
+    if (descriptor < 0)
+    {
+        storage_error("Cannot open model storage");
+        return false;
+    }
+    const int result = _fstatfs(descriptor, &volume);
+    const int saved_errno = errno;
+    close(descriptor);
+    errno = saved_errno;
+#else
+    struct statvfs volume
+    {
+    };
+    const int result = statvfs(prospero::model_root(), &volume);
+#endif
+    if (result != 0)
+    {
+        storage_error("Cannot check free model storage");
+        return false;
+    }
+#ifdef __FreeBSD__
+    const auto block = volume.f_bsize;
+#else
+    const auto block = volume.f_frsize ? volume.f_frsize : volume.f_bsize;
+#endif
+    // Division avoids overflowing a block-count product.
+    if (!block || volume.f_bavail <= 0 ||
+        bytes / block + (bytes % block != 0) > static_cast<std::uint64_t>(volume.f_bavail))
+    {
+        set_status("Not enough free space in model storage.");
+        current.store(State::Failed);
+        return false;
+    }
+    return true;
 }
 
 // Streaming SHA-256 so multi-gigabyte files never need to be loaded into RAM.
@@ -421,8 +476,14 @@ bool fetch_preset_file(HttpSession &http, const Preset &preset, const PresetFile
     return true;
 }
 void install_preset() {
+    storage_fault = false;
     const auto &preset = presets[worker_preset.load()];
     if (!ensure_model_root()) { storage_error("Cannot open model storage"); return; }
+    std::uint64_t required = 0;
+    for (std::size_t i = 0; i < preset.count; ++i)
+        required += preset.files[i].size;
+    if (!enough_space(required))
+        return;
     HttpSession http;
     if (!http.open()) return;
     const std::string final = std::string(prospero::model_root()) + "/" + preset.id;
@@ -433,14 +494,32 @@ void install_preset() {
         const auto &file = preset.files[i];
         const std::string target = preset.kind == 0 ? final : staging + "/" + file.path;
         if (!fetch_preset_file(http, preset, file, target, completed)) {
-            if (cancel_pending() && preset.kind != 0) remove_tree(staging);
+            if (preset.kind != 0 && (cancel_pending() || storage_fault))
+                remove_tree(staging);
             return;
         }
     }
     // A single file is in place by now; a bundle is still in its staging folder.
     if (preset.kind != 0 && cancel_pending()) { remove_tree(staging); return; }
     if (preset.kind != 0 && rename(staging.c_str(), final.c_str()) != 0) {
-        storage_error("Cannot install completed bundle"); return;
+        storage_error("Cannot install completed bundle");
+        remove_tree(staging);
+        return;
+    }
+    if (preset.kind == 1)
+    {
+        // Defaults are intentionally restricted to a known family. Custom bundles keep
+        // their own parameter files and curated model.json remains byte-for-byte intact.
+        const std::string path = final + "/prospero-params.cfg";
+        if (std::string(preset.id) == "sd-turbo-fp16")
+        {
+            if (FILE *file = std::fopen(path.c_str(), "wx"))
+            {
+                std::fputs("steps=1\ncfg=1.0\nseed=42\nwidth=512\nheight=512\nprediction=eps\n",
+                           file);
+                std::fclose(file);
+            }
+        }
     }
     set_status(preset.kind == 0 ? "Preset verified and installed. Refreshing models."
                               : "Bundle verified and installed. Refreshing models.");
@@ -534,6 +613,11 @@ void *worker_impl(void *) {
             item=items[worker_index]; repo=worker_repo;
         }
         if (!ensure_model_root()) { storage_error("Cannot open model storage"); worker_done.store(true); return nullptr; }
+        if (!enough_space(item.size))
+        {
+            worker_done.store(true);
+            return nullptr;
+        }
         const std::string final_path=std::string(prospero::model_root())+"/"+installed_name(repo,item.name);
         const std::string part_path=final_path+".part";
         const std::string url="https://huggingface.co/"+repo+"/resolve/main/"+encode_path(item.name);

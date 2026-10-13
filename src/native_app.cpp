@@ -144,6 +144,7 @@ bool save_preferences(const Preferences &p)
 {
     std::lock_guard<std::mutex> lock(prospero_settings::mutex);
     const auto runtime = prospero_settings::read_unlocked();
+    const auto extensions = prospero_settings::preference_extensions_unlocked();
     constexpr const char *temporary = PROSPERO_SETTINGS_PATH ".tmp";
     std::FILE *file = std::fopen(temporary, "wb");
     if (!file)
@@ -155,8 +156,11 @@ bool save_preferences(const Preferences &p)
         p.model_id.c_str(), p.style, p.output_limit, p.theme, p.accent, p.volume, p.text_size,
         p.reduced_motion ? 1U : 0U, p.high_contrast ? 1U : 0U, runtime.context, runtime.kv,
         runtime.thinking ? 1U : 0U);
+    const bool preserved =
+        std::fwrite(extensions.data(), 1, extensions.size(), file) == extensions.size();
     const int closed = std::fclose(file);
-    if (bytes < 0 || closed != 0 || std::rename(temporary, PROSPERO_SETTINGS_PATH) != 0)
+    if (bytes < 0 || !preserved || closed != 0 ||
+        std::rename(temporary, PROSPERO_SETTINGS_PATH) != 0)
     {
         std::remove(temporary);
         return false;

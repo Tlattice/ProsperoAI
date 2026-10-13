@@ -45,12 +45,12 @@ class HttpApiTests(unittest.TestCase):
 
     def test_runtime_settings_round_trip(self):
         config = Path(self.scratch.name) / 'runtime.cfg'
-        config.write_text('version=2\nstyle=2\ntokens=192\ntheme=1\n')
+        config.write_text('version=2\nstyle=2\ntokens=192\ntheme=1\nmodel_root=/mnt/usb0/models\n')
         header, body = self.request('/api/settings/runtime', body={'context':'32k', 'kv':'auto', 'thinking':True})
         self.assertIn('200 OK', header)
         expected = {'context':'32k', 'kv':'auto', 'thinking':True}
         self.assertEqual(json.loads(body), expected)
-        self.assertIn('style=2\ntokens=192\ntheme=1\n', config.read_text())
+        self.assertIn('style=2\ntokens=192\ntheme=1\nmodel_root=/mnt/usb0/models\n', config.read_text())
         self.assertEqual(json.loads(self.request('/api/settings/runtime')[1]), expected)
         header, body = self.request('/api/settings/runtime', body={'context':'256k', 'kv':'auto', 'thinking':True})
         self.assertIn('200 OK', header)

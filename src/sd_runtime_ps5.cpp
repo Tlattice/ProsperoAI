@@ -1,6 +1,9 @@
 #include "ggml-vulkan.h"
 static_assert(GGML_MAX_NAME == 160, "SD and llama must share the tensor ABI");
 #include "stable-diffusion.h"
+#include "model_config.hpp"
+#include <vector>
+#include <filesystem>
 
 #include "ggml-backend.h"
 
@@ -20,7 +23,9 @@ namespace
 {
 
 sd_ctx_t *context;
-char context_root[192];
+std::string context_root;
+std::string context_prediction;
+std::filesystem::file_time_type context_root_modified;
 void (*progress_callback)(const char *);
 bool backend_registered;
 
@@ -42,6 +47,7 @@ void sd_log(sd_log_level_t level, const char *message, void *)
 
 void sd_progress(int step, int steps, float, void *)
 {
+    log_line("[prosperoai:sd] progress=%d/%d\n", step, steps);
     if (!progress_callback)
         return;
     char status[96];
@@ -73,7 +79,8 @@ bool write_ppm(const char *path, const sd_image_t &image)
 
 bool write_tga(const char *path, const sd_image_t &image)
 {
-    if (!image.data || image.width != 512 || image.height != 512 || image.channel < 3)
+    if (!image.data || image.width == 0 || image.height == 0 || image.width > 1024 ||
+        image.height > 1024 || image.channel < 3)
         return false;
     std::FILE *file = std::fopen(path, "wb");
     if (!file)
@@ -87,7 +94,7 @@ bool write_tga(const char *path, const sd_image_t &image)
     header[16] = 32;
     header[17] = 0x28;
     bool ok = std::fwrite(header, 1, sizeof(header), file) == sizeof(header);
-    unsigned char row[512 * 4];
+    std::vector<unsigned char> row(image.width * 4);
     for (unsigned y = 0; y < image.height && ok; ++y)
     {
         for (unsigned x = 0; x < image.width; ++x)
@@ -99,7 +106,7 @@ bool write_tga(const char *path, const sd_image_t &image)
             row[x * 4 + 2] = source[0];
             row[x * 4 + 3] = 255;
         }
-        ok = std::fwrite(row, 4, image.width, file) == image.width;
+        ok = std::fwrite(row.data(), 4, image.width, file) == image.width;
     }
     return std::fclose(file) == 0 && ok;
 }
@@ -110,14 +117,24 @@ void release_context()
     {
         free_sd_ctx(context);
         context = nullptr;
-        context_root[0] = '\0';
+        context_root.clear();
     }
     log_line("[prosperoai] sd_context_released=1\n");
 }
 
-bool ensure_context(const char *root)
+bool ensure_context(const char *root, const prospero::ImageParameters &config)
 {
-    if (context && std::strcmp(context_root, root) == 0)
+    std::error_code error;
+    const auto modified = std::filesystem::last_write_time(root, error);
+    if (error)
+    {
+        release_context();
+        return false;
+    }
+    // The pinned loader validates the bundle directory timestamp. Adding/removing
+    // a parameter file changes it; edits to an existing file stay per-image.
+    if (context && context_root == root && context_prediction == config.prediction &&
+        context_root_modified == modified)
         return true;
     release_context();
     if (!backend_registered)
@@ -136,7 +153,7 @@ bool ensure_context(const char *root)
     parameters.n_threads = 1;
     parameters.wtype = SD_TYPE_F16;
     parameters.rng_type = CUDA_RNG;
-    parameters.prediction = EPS_PRED;
+    parameters.prediction = config.prediction == "v" ? V_PRED : EPS_PRED;
     parameters.enable_mmap = false;
     parameters.eager_load = false;
     parameters.diffusion_conv_direct = false;
@@ -149,7 +166,9 @@ bool ensure_context(const char *root)
         release_context();
         return false;
     }
-    std::snprintf(context_root, sizeof(context_root), "%s", root);
+    context_root = root;
+    context_prediction = config.prediction;
+    context_root_modified = modified;
     return true;
 }
 
@@ -173,26 +192,36 @@ extern "C" int ps5_sd_generate(const char *root, const char *prompt, char *respo
         return 1;
     progress_callback = progress;
     if (progress_callback)
-        progress_callback("Loading SD-Turbo");
+        progress_callback("Loading image model");
     std::remove(oracle_output);
     std::remove(display_output);
     const std::uint64_t start = sceKernelGetProcessTime();
-    if (!ensure_context(root))
+    const auto config = prospero::image_parameters(root);
+    log_line("[prosperoai:sd] steps=%d cfg=%.3f seed=%lld size=%dx%d clip_skip=%d sampler=%s "
+             "prediction=%s negative_prompt=%s\n",
+             config.steps, config.cfg, static_cast<long long>(config.seed), config.width,
+             config.height, config.clip_skip, config.sampler.c_str(), config.prediction.c_str(),
+             config.negative_prompt.c_str());
+    if (!ensure_context(root, config))
     {
-        std::snprintf(response, response_capacity, "Could not load the SD-Turbo model.");
+        std::snprintf(response, response_capacity, "Could not load the image model.");
+        progress_callback = nullptr;
         return 2;
     }
 
     sd_img_gen_params_t parameters;
     sd_img_gen_params_init(&parameters);
     parameters.prompt = prompt;
-    parameters.negative_prompt = "";
-    parameters.width = 512;
-    parameters.height = 512;
-    parameters.seed = 42;
+    parameters.negative_prompt = config.negative_prompt.c_str();
+    parameters.clip_skip = config.clip_skip;
+    parameters.width = config.width;
+    parameters.height = config.height;
+    parameters.seed = config.seed;
     parameters.batch_count = 1;
-    parameters.sample_params.sample_steps = 1;
-    parameters.sample_params.guidance.txt_cfg = 1.0f;
+    parameters.sample_params.sample_steps = config.steps;
+    if (!config.sampler.empty())
+        parameters.sample_params.sample_method = str_to_sample_method(config.sampler.c_str());
+    parameters.sample_params.guidance.txt_cfg = config.cfg;
 
     sd_image_t *images = nullptr;
     int image_count = 0;
@@ -208,7 +237,7 @@ extern "C" int ps5_sd_generate(const char *root, const char *prompt, char *respo
     if (!written)
     {
         std::snprintf(response, response_capacity,
-                      "SD-Turbo generation failed. Check the system log.");
+                      "Image generation failed. Check the system log.");
         return 3;
     }
     std::snprintf(response, response_capacity, "Image generated locally.\n%s", display_output);

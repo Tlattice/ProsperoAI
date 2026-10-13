@@ -507,11 +507,12 @@ void handle_get_tags(const NetApi &api, int sock)
     const unsigned count = gpt_runtime_model_count();
     for (unsigned i = 0; i < count; ++i)
     {
+        // The runtime accessor reuses thread-local string storage on every call.
+        const std::string id = gpt_runtime_model_id(i);
         char entry[256];
         std::snprintf(entry, sizeof(entry),
                       "%s{\"name\":\"%s\",\"model\":\"%s\",\"details\":{\"family\":\"%s\"}}",
-                      i == 0 ? "" : ",", gpt_runtime_model_id(i), gpt_runtime_model_id(i),
-                      gpt_runtime_model_purpose(i));
+                      i == 0 ? "" : ",", id.c_str(), id.c_str(), gpt_runtime_model_purpose(i));
         std::strncat(body, entry, sizeof(body) - std::strlen(body) - 1);
     }
     std::strncat(body, "]}", sizeof(body) - std::strlen(body) - 1);
@@ -664,6 +665,8 @@ void handle_model_download_status(const NetApi &api, int sock)
     std::strncat(body, state, sizeof(body) - std::strlen(body) - 1);
     std::strncat(body, "\",\"status\":\"", sizeof(body) - std::strlen(body) - 1);
     json_append_escaped(body, sizeof(body), status);
+    std::strncat(body, "\",\"model_root\":\"", sizeof(body) - std::strlen(body) - 1);
+    json_append_escaped(body, sizeof(body), prospero::model_root());
     std::uint64_t completed = 0, total = 0;
     prospero_model_download::progress(&completed, &total);
     char progress[200];

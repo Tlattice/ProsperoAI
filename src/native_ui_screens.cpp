@@ -2,6 +2,7 @@
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "native_ui_impl.hpp"
+#include "model_paths.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -370,6 +371,7 @@ void NativeUI::Impl::draw_models(ui::Canvas &canvas) const
 {
     auto &list = canvas.list;
     const auto &state = app_.state();
+    text(list, model_root(), kLeft, 390, 18, palette_.muted);
     if (filters_.active() == 0)
     {
         label(list, "MODEL LIBRARY", kLeft, 222, palette_.accent);
@@ -470,8 +472,8 @@ void NativeUI::Impl::draw_models(ui::Canvas &canvas) const
                           card.cx(), card.y + 316, 25, palette_.muted, false, gfx::Align::center);
                      text(list, "or download a model directly in ProsperoAI.", card.cx(),
                           card.y + 352, 25, palette_.muted, false, gfx::Align::center);
-                     ui::text(list, fonts_.mono, "/data/homebrew/prosperoai/models", card.cx(),
-                              card.y + 404, 22, palette_.accent, gfx::Align::center);
+                     ui::text(list, fonts_.mono, model_root(), card.cx(), card.y + 404, 22,
+                              palette_.accent, gfx::Align::center);
                  }
              });
         return;

@@ -648,3 +648,233 @@ bounded residency move to the subsequent draft PR.
   4 would have been rejected), and a realistic cold-load burst (the 6 static assets plus
   `/v1/models` and `/api/conversations`) all succeeded concurrently. Host lint and all 55
   tests pass.
+
+## 2026-10-13 — configurable model root and image parameters (host only)
+
+Implemented startup `model_root=` selection with directory/read-access fallback,
+startup mount probes, custom image manifest discovery, download free-space preflight
+and storage-error cleanup, Models root display, and per-generation image parameter
+files with prediction-aware context invalidation and variable-size TGA output.
+Usage and remaining scope: `docs/MODEL_STORAGE.md`.
+
+Host root/fallback, parameter/settings-preservation and downloader tests pass.
+PS5-target syntax checks pass for storage, downloader, SD and the runtime router;
+no linked app or console runtime claim. Full `make test` was attempted but failed
+on unavailable dependencies, LeakSanitizer under the sandbox, and self-update socket
+restrictions; interrupted the blocked self-update run. FTP, ps5vkctl and shsrv
+connections were refused. No console files or titles were changed, and no reboot
+was requested. External mount/filesystem, SD-Turbo four-step progress, unplug fallback,
+Waifu correctness and timing remain unverified. Multi-root hot-plug and VAE precision
+controls remain outside this implementation.
+
+### 2026-10-13 — FTP inspection after server enabled
+
+Read-only inspection succeeded on the user-configured FTP port 2121. This server
+rejects NLST with 502 but accepts LIST; added a targeted fallback to ps5ctl and
+verified its host regression test. `/mnt/usb0` through `/mnt/usb7` and `/mnt/ext0`
+all listed only `.` and `..`; their existence does not prove an external volume
+is mounted. Internal storage contains Mistral GGUF, Qwen3.5 9B GGUF and SD-Turbo.
+No designated test-title folder was listed under `/data/homebrew`. External-drive
+connection and test-slot identity requested from the user. No files were uploaded,
+no settings changed, and no title was stopped or launched.
+
+### 2026-10-13 — external drive visible after connection
+
+Read-only FTP listings now show the external drive at `/mnt/usb0`; the other USB
+slots remain empty. A root-level file is reported as 76,001,050,624 bytes, which
+rules out FAT32's single-file limit, but FTP alone does not identify the filesystem.
+The drive's `homebrew` folder contains the main ProsperoAI title and two unrelated
+titles (ProsperoEden and RetroArch, confirmed through their metadata). No ProsperoAI
+test slot was identified. No remote files or settings were changed. App-process
+access to the drive, filesystem type and free space still require runtime verification.
+
+### 2026-10-13 — production replacement authorized; build resumed after host reset
+
+The user explicitly authorized replacing `PPSA99004`; that session authorization
+supersedes the usual test-slot restriction for this task. The running executable,
+metadata, web assets and settings were backed up under `/tmp/prospero-before-storage`.
+No reboot or unrelated-title changes are authorized.
+
+Recovered the missing build prerequisites in task-local directories, rebuilt the
+pinned RADV release archive and shared Prism/SD runtime, and packaged the signed
+`external-storage` app folder and ZIP. The candidate executable has SHA-256
+`c30329065bc805c16e344041de67da31aa1536ac1d2f8a00396f96da2464156a`.
+The static inspector reports zero errors; NEEDED entries match the running build
+and the ELF program-header layout retains its entry point, aligned loads and empty TLS.
+Full host suite: 52 tests, OK, 3 optional-runtime skips. No console generation result
+for the candidate is claimed yet.
+
+A read-only mount payload confirmed `/mnt/usb0` is `exfatfs`, with
+824,364,236,800 available bytes. A task-scoped copy payload copied the internal
+SD-Turbo bundle into `/mnt/usb0/ProsperoAI/models/sd-turbo-fp16`, preserving the
+internal source; its hidden staging directory was finalized only after successful
+file writes. The control payload is resident and reports `PPSA99004` running.
+
+The executable and changed web assets are staged separately under
+`/mnt/usb0/ProsperoAI/update-stage`; active app files and settings remain unchanged.
+Requested a UI close before activating the folder update, per the repository workflow;
+Remote Play control and the ShadowMount API are unavailable on this console.
+
+Staged-upload readback: FTP returns the decrypted ELF, not the signed FSELF.
+All five LOAD payloads (including the linking LOAD), the ELF header and complete
+program-header table match the locally linked ELF byte-for-byte. Differences are
+confined to the final section-header table rewritten by container conversion.
+The readback also passes static inspection with zero errors. The app still reports
+running; activation awaits its UI close.
+
+### 2026-10-13 — authorized replacement boots; internal baseline and USB selection
+
+After the user closed the title in the UI, agent status reported idle and a filtered
+mount payload showed no app mount. Preserved the original executable and changed
+assets as `.before-storage` files, activated the staged replacement, and launched
+`PPSA99004`. The app HTTP backend responded directly and selected the internal root.
+SD-Turbo generated a valid 512×512 TGA: cold request 30.06 s, warm requests 1.14 s
+and 1.13 s wall time (runtime inference approximately 1.00 s). Trace confirms 1/1.
+The internal image SHA-256 is
+`22f5bb05981077e7463c2eccd3097be219e1f85bef314bb70bd343f6d82b2da9`.
+
+Runtime testing exposed a catalog string-lifetime bug: two model-id calls in one
+`snprintf` expression invalidated an earlier thread-local buffer pointer. Copied the
+id once per entry, rebuilt, verified zero static errors and unchanged NEEDED libraries,
+and passed all 19 HTTP tests. Final signed executable SHA-256:
+`f10e7861ddedaa1e4a60ef70e0dd8fa35039164786310f74e7abed1e240a6bb6`.
+After another user UI close, activated that executable and configured the external
+root. The launched backend reports `/mnt/usb0/ProsperoAI/models`; `/api/tags` is valid
+JSON and lists SD-Turbo. The external bundle has no parameter file for baseline testing.
+No original internal models were moved or deleted; no reboot was performed.
+
+USB no-parameter baseline completed: cold 61.54 s, warm 1.19 s wall time; both
+images are byte-identical to the internal baseline. Uploaded task-only `steps=4`;
+without restarting the app, trace confirms all four denoising steps, ending 4/4.
+Warm four-step request: 1.88 s wall time, runtime 1.73 s. The prior HTTP runtime
+settings rewrite had released the model context, so the first four-step request
+included another USB load (61.96 s); this is not a warm four-step timing.
+Removed the task parameter file afterward. FTP returned successful deletion code
+226, which Python ftplib treated as an unexpected response. The following default
+verification request was interrupted by the user's UI close and is not claimed.
+
+Console settings readback exposed a second writer: native `save_preferences` rewrote
+known fields and discarded `model_root`, despite the HTTP writer preserving it.
+Fixed native saves to retain unknown settings and comments through a shared helper;
+added a host regression checking root and extension-field preservation. Parser test
+passes, package static inspection has zero errors. Final settings-fix FSELF SHA-256:
+`fef67d4ff27573461c07c277ced725815c1213b60f8c7d266aef555748fbe6f1`.
+
+Activated the settings-preserving build after the user's UI close; direct HTTP
+catalog and root are correct, and FTP settings readback retains `model_root`
+after startup plus a same-value HTTP runtime-settings save. All 19 HTTP tests pass.
+Default USB generation again reproduces the baseline exactly (61.51 s cold).
+Removed intermediate task build files and the originally absent debug marker;
+FTP LIST verifies cleanup despite the server's nonstandard 226 DELE response.
+Original `.before-storage` rollback files remain intact.
+
+An additional 256×256 test read its size correctly but failed source validation.
+The task removed its parameter file before the generation completed, changing
+the bundle directory timestamp while the loader was preparing weights. This
+revealed that the pinned loader tracks the root directory timestamp as a source.
+Added timestamp comparison to cached-context reuse, so creating/removing files
+reloads the context on the next request; edits to an existing parameter file still
+apply without a reload. No 256×256 correctness result is claimed at this point.
+
+Activated the folder-timestamp fix after the user's UI close; static inspection
+has zero errors and NEEDED libraries still match the original working build.
+Final FSELF SHA-256:
+`9c85dc46faa62fbbfc1fd768daf6d5c9677bdb6ff81e479c8b6062fd0be74d85`.
+The external root remains in settings after this boot. With the parameter file
+kept stable, the final build generates a valid 256×256, 262,162-byte TGA from USB
+(cold request 60.84 s). This verifies generalized output dimensions. Parameter
+file removal/recreation and live edits remain under verification for this build.
+
+Final cache-fix verification completed: editing the existing parameter file from
+256×256/one step to 512×512/four steps produced a valid 1,048,594-byte TGA in 2.99 s
+wall time, with trace showing 1/4 through 4/4. Removed the file only after completion;
+the following default request reloaded the context successfully (61.24 s cold) and
+reproduced the internal baseline byte-for-byte. Subsequent warm default request:
+1.09 s wall time. Direct HTTP catalog remains valid and reports the USB root.
+
+Native controller suite passes all 3 tests. Added and separately passed a regression
+through the real controller confirming `model_root` and a future setting survive
+native preference saves. The parameter/root parser test and all 19 HTTP tests passed
+with the settings fix; the earlier full host run passed 52 tests with 3 optional skips.
+`git diff --check` passes. No commits or pushes were made.
+
+Final console state: `PPSA99004` running the timestamp-aware build; root is
+`/mnt/usb0/ProsperoAI/models`, containing the copied SD-Turbo bundle. Original internal
+models are intact. No test parameter file remains; FTP LIST confirms the update stage
+is empty and the originally absent debug marker is removed. Original executable and
+changed web files remain as `.before-storage` rollback backups. No reboot occurred.
+Physical unplug/start, mid-download removal, visual Models-screen verification and
+Waifu Diffusion were not tested. The app itself is USB-installed, so unplug/start needs
+an internal app installation. Multi-root hotplug scanning, VAE precision controls and
+additional default-family detection remain outside this implementation.
+
+### 2026-10-13 — downloader illegal syscall fixed; remote shutdown verified
+
+The user reported SYSTEM_ILLEGAL_FUNCTION_CALL in the downloader thread. Reproduced
+through the direct app API: repository browsing succeeds, but starting a 1,185,376-byte
+GGUF transfer terminates the title before any bytes arrive. The free-space patch
+introduced `statfs` from libcompat. Disassembly confirms that function executes syscall
+396 directly from app memory, which is disallowed in a native title; a payload's SDK
+syscall trampoline is a different execution path and did not validate this app call.
+
+Changed console preflight to open the model directory with the existing safe open path
+and call libkernel's exported `_fstatfs` on its descriptor, preserving errno over close.
+Host downloader storage tests pass; native object imports `_fstatfs`; package static
+inspection has zero errors and NEEDED libraries match the working build. FSELF SHA-256:
+`081d349ec2d1ebddbbbfcf6710fdfaaf411c8a0cf9683ff147ebd9331fff63c0`.
+Deployed to the already stopped/unmounted, explicitly authorized `PPSA99004` folder.
+Direct HTTP verification downloaded and checksum-verified `tinyllamas/stories260K.gguf`
+from the test repository into the USB model root. Complete byte count: 1,185,376;
+FTP readback SHA-256:
+`270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d`.
+The runtime catalog discovers the downloaded text model without restarting.
+
+The user's payload-manager clone is `tmp/ps5-payload-manager` under this repository,
+not system `/tmp`. Inspected its process API and queried the console's port 8084.
+Matched the title PID using `agent procs` plus `/processes_list`, then issued the
+user-authorized `/process_kill` POST with its request marker. Agent status confirmed
+idle and the filtered mount probe showed no app mount. This verified remote shutdown
+without a UI close or reboot. Updated the stable workflow to prefer verified remote
+shutdown, retaining title/PID and unmount checks.
+
+Removed the task-only downloaded GGUF and intermediate executable, retaining original
+rollback files; relaunched the fixed main title. Original internal models and external
+SD-Turbo are untouched. No reboot, commits or pushes occurred.
+
+### 2026-10-13 — Waifu bundle moved, LFS placeholders repaired, generation verified
+
+At the user's request, moved the full Waifu folder from the USB app's `models/`
+into the configured external model root, then remotely restarted the title.
+The catalog discovers it, but loading failed because the cloned repository's weights
+were 134–135-byte Git LFS pointers, not model data. Origin: the public
+`hakurei/waifu-diffusion` repository. The model's scheduler specifies epsilon prediction.
+
+Fetched its three FP16 safetensors components. Host SHA-256 checks and safetensors
+header/payload bounds pass; staged USB copies were independently hashed by a task
+payload using the pinned public-domain SHA-256 implementation. Verified sizes/hashes:
+- UNet: 1,731,904,736 bytes,
+  `7b5cdd1c15f025166ded673f898e09e621c9ff828d6508a81e83378a6d0ba8dd`.
+- Text encoder: 680,821,096 bytes,
+  `22bc8e104d064b678ef7d2d2b217d4a8c9bfb79fb35792417cdf228e70adc7fb`.
+- VAE: 167,335,342 bytes,
+  `9d8fb415ab4f9782232e7bb82e618e2c0cef0be3593c77a35f5733d8fdd3530f`.
+
+Installed FP16 data under the loader's expected Diffusers filenames, preserving
+original pointer files as `.git-lfs-pointer` backups. Left `model.json` intact.
+Added a previously absent `prospero-params.cfg`: 24 steps, CFG 7, seed 42, 512×512,
+Euler ancestral, epsilon prediction, automatic clip skip (-1), and a negative prompt.
+Stopped/restarted only the verified title through Payload Manager, without a UI close
+or reboot. No app executable changed during this data repair.
+
+Direct HTTP generation with Waifu succeeds: cold request 75.16 s including loading;
+warm repeat 12.50 s wall time, runtime 12.30 s. Trace confirms the applied parameters
+and 24/24 on both runs. Generated TGA has 512×512 dimensions and 1,048,594 bytes;
+visual inspection shows a nonblank watercolor mountain/lake landscape. These are
+smoke-test timings, not a multi-run benchmark or universal quality claim.
+
+Removed both hidden repair staging folders, aborted partial files and the temporary
+debug marker. Task download/verification payloads exited or were stopped by verified
+PID; the control payload remains resident. Final title state: `PPSA99004` running,
+external catalog includes SD-Turbo and Waifu, with Waifu's loaded context ready.
+Internal models and original executable rollback backups are preserved. Evidence
+artifacts are under `/tmp/prospero-waifu-*`; no commits or pushes were made.

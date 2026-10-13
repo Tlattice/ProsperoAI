@@ -33,3 +33,23 @@ class BinaryDownload(unittest.TestCase):
             self.assertEqual(target.read_bytes(), payload)
             self.assertEqual(ftp.command, 'RETR /download0/image.bmp')
             self.assertTrue(ftp.closed)
+
+    def test_listing_falls_back_for_unsupported_nlst(self):
+        import ftplib
+        class FTP:
+            def nlst(self, remote):
+                raise ftplib.error_perm('502 Command not recognized')
+            def retrlines(self, command, emit):
+                self.command = command
+                emit('drwxr-xr-x 2 0 0 0 Oct 13 00:00 models')
+            def quit(self):
+                pass
+        with patch.dict(os.environ, {'PS5_HOST': 'console.invalid'}):
+            spec = importlib.util.spec_from_file_location('ps5ctl_listing_test', ROOT / 'tools/ps5ctl.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        ftp = FTP()
+        with patch.object(module, 'ftp_connect', return_value=ftp), patch('builtins.print') as output:
+            module.cmd_ftp(SimpleNamespace(action='ls', remote='/mnt/usb0'))
+        self.assertEqual(ftp.command, 'LIST /mnt/usb0')
+        output.assert_called_once_with('drwxr-xr-x 2 0 0 0 Oct 13 00:00 models')

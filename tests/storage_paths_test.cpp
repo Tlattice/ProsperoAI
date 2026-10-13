@@ -55,6 +55,23 @@ int main(int argc, char **argv)
         file >> bytes;
     }
     assert(bytes == "existing");
+    assert(prospero::real_path("/mnt/usb0/models/a") == "/mnt/usb0/models/a");
+    const auto config = root + "/prosperoai.cfg";
+    {
+        std::ofstream file(config);
+        file << "model_root=" << source << "/\n";
+    }
+    assert(prospero::select_model_root(config, target) == source);
+    {
+        std::ofstream file(config);
+        file << "model_root=" << root << "/missing\n";
+    }
+    assert(prospero::select_model_root(config, target) == target);
+    {
+        std::ofstream file(config);
+        file << "model_root=" << source << "/session-id/result.txt\n";
+    }
+    assert(prospero::select_model_root(config, target) == target);
     assert(std::filesystem::exists(target + "/session-id/result.txt.json"));
     {
         std::ofstream file(root + "/blocked");
