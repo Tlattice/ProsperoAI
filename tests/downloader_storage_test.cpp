@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <cassert>
 #include <cstring>
 #include <cerrno>
@@ -16,12 +17,22 @@ static int forbidden_parent_mkdir(const char *, mode_t)
     errno = EACCES;
     return -1;
 }
+static unsigned long available_blocks = 10;
+static int fake_statvfs(const char *, struct statvfs *volume)
+{
+    *volume = {};
+    volume->f_bsize = volume->f_frsize = 4096;
+    volume->f_bavail = available_blocks;
+    return 0;
+}
+#define statvfs(...) fake_statvfs(__VA_ARGS__)
 #define stat(...) mounted_stat(__VA_ARGS__)
 #define mkdir(...) forbidden_parent_mkdir(__VA_ARGS__)
 #define PS5_LLAMA_VULKAN
 #include "../vulkan/model_downloader_ps5.cpp"
 #undef stat
 #undef mkdir
+#undef statvfs
 static std::vector<std::string> requested;
 static long answer_status = 200;
 // A stand-in file server: `served` from the requested offset (when ranges are honoured),
@@ -96,6 +107,9 @@ std::uint64_t gpt_runtime_vulkan_heap_bytes()
 }
 int main()
 {
+    assert(prospero_model_download::enough_space(40960));
+    assert(!prospero_model_download::enough_space(40961));
+    assert(!prospero_model_download::enough_space(UINT64_MAX));
     using namespace prospero_model_download;
     assert(ensure_model_root());
     HttpSession session;

@@ -86,9 +86,16 @@ port 2323), process list, launch and screenshots.
   before installing a different image. Folder-backed test titles can be updated after stopping
   the title and verifying it is unmounted.
 - Deleting files from `/data/homebrew` does not remove the registration.
-- To update a folder-backed test title without a reboot, stop it in the console UI, verify
+- To update a folder-backed test title without a reboot, stop it through verified remote
+  process control (or the console UI when remote control is unavailable), verify
   `shadow info <ID>` reports `mounted:false`, then upload only the changed files with FTP. The
   first registration still requires the configured title registration workflow.
+- Prefer remote shutdown over asking the user for repeated UI closes. PS5 Payload Manager
+  exposes `GET /processes_list` and `POST /process_kill?pid=<PID>` on port 8084; POST requires
+  `X-PLDMGR-Request: 1`. First use `agent procs` to verify the authorized title and its PIDs,
+  then match them in the manager list. Never identify a title from `eboot.bin` alone. Verify
+  the title is stopped and unmounted after killing it; a successful HTTP reply is insufficient.
+  `agent kill <ID>` is another title-scoped option when the control payload is available.
 - Icons and metadata come from `sce_sys/`. Use this project's `sce_sys`, not another project's.
 
 ## Git and attribution

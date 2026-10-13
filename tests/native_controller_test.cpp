@@ -185,7 +185,7 @@ int main(int argc, char **argv)
     std::remove(PROSPERO_SETTINGS_PATH);
     {
         std::ofstream settings(PROSPERO_SETTINGS_PATH);
-        settings << "style=2\ntokens=192\n";
+        settings << "style=2\ntokens=192\nmodel_root=/mnt/usb0/models\nfuture_setting=yes\n";
     }
     ui_thread = std::this_thread::get_id();
     {
@@ -278,6 +278,12 @@ int main(int argc, char **argv)
         preferences.output_limit = 65536;
         app.set_preferences(preferences);
         settle(app);
+        {
+            std::ifstream settings(PROSPERO_SETTINGS_PATH);
+            const std::string contents((std::istreambuf_iterator<char>(settings)), {});
+            assert(contents.find("model_root=/mnt/usb0/models\n") != std::string::npos);
+            assert(contents.find("future_setting=yes\n") != std::string::npos);
+        }
         // An API client may have selected another model between UI requests.
         selected = 12;
         assert(app.send("Long response"));

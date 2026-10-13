@@ -103,6 +103,7 @@ async function pollDownloads(){
     clearTimeout(downloadPoll);
     try{
         const response=await api('/api/models/download');downloadState=await response.json();
+        $('download-root').textContent=downloadState.model_root?`Model storage: ${downloadState.model_root}`:'';
         $('download-status').textContent=downloadState.status||'Ready';
         const bar=$('download-progress');bar.hidden=downloadState.state!=='downloading';
         bar.value=downloadState.total?Math.min(100,downloadState.completed*100/downloadState.total):0;

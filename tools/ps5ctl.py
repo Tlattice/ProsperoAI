@@ -106,8 +106,15 @@ def cmd_ftp(args):
     ftp = ftp_connect()
     try:
         if args.action == "ls":
-            for line in ftp.nlst(args.remote or HOMEBREW):
-                print(line)
+            remote = args.remote or HOMEBREW
+            try:
+                for line in ftp.nlst(remote):
+                    print(line)
+            except ftplib.error_perm as error:
+                if str(error)[:3] not in {"500", "502", "504"}:
+                    raise
+                # Some console FTP servers implement LIST but not NLST.
+                ftp.retrlines(f"LIST {remote}", print)
         elif args.action == "size":
             ftp.voidcmd("TYPE I")
             print(ftp.size(args.remote))

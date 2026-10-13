@@ -28,6 +28,35 @@ inline Runtime read_unlocked() {
     return p;
 }
 inline Runtime get() { std::lock_guard<std::mutex> lock(mutex); return read_unlocked(); }
+// Native preferences rewrite their known fields; retain extension settings verbatim.
+inline std::string preference_extensions_unlocked()
+{
+    std::string result;
+    if (auto *f = std::fopen(PROSPERO_SETTINGS_PATH, "rb"))
+    {
+        char line[4096];
+        while (std::fgets(line, sizeof(line), f))
+        {
+            const auto end = std::strchr(line, '=');
+            const std::string key(line, end ? static_cast<std::size_t>(end - line) : 0);
+            bool known = false;
+            for (const char *field :
+                 {"version", "model", "style", "tokens", "theme", "accent", "volume", "text_size",
+                  "reduced_motion", "high_contrast", "context", "kv", "thinking"})
+                if (key == field)
+                {
+                    known = true;
+                    break;
+                }
+            if (!known)
+                result += line;
+        }
+        std::fclose(f);
+    }
+    if (!result.empty() && result.back() != '\n')
+        result += '\n';
+    return result;
+}
 inline bool set_unlocked(Runtime p) {
     if (!valid_context(p.context) || p.kv != 0) return false;
     std::string contents;

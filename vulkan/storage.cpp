@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #ifdef PROSPERO_UI_VULKAN
 #include "storage.hpp"
+#include "model_config.hpp"
 
 #include "elevation/elevation.hpp"
 #include "model_paths.hpp"
@@ -277,7 +278,7 @@ const Storage &prepare_storage()
     for (const char *folder : {"/models", "/sessions", "/logs", "/work", "/work/text",
                                "/work/image", "/work/audio", "/work/voice", "/work/tmp"})
         ::mkdir((settled.data_root + folder).c_str(), 0777);
-    model_root_slot() = settled.model_root.c_str();
+    // Adopt older internal models before redirecting downloads to another volume.
 
     if (settled.granted() && settled.data_root == kData)
     {
@@ -291,6 +292,21 @@ const Storage &prepare_storage()
             settled.moved_models += adopt_models("/data/homebrew/" + settled.title_id + "/models");
         adopt_sandbox_data();
     }
+    if (settled.granted())
+        for (unsigned slot = 0; slot < 9; ++slot)
+        {
+            const std::string mount = slot == 8 ? "/mnt/ext0" : "/mnt/usb" + std::to_string(slot);
+            errno = 0;
+            DIR *directory = opendir(mount.c_str());
+            const int error = directory ? 0 : errno;
+            if (directory)
+                closedir(directory);
+            say("[prosperoai] storage probe: path=%s readable=%d errno=%d\n", mount.c_str(),
+                error == 0, error);
+        }
+    settled.model_root =
+        select_model_root(settled.data_root + "/prosperoai.cfg", settled.model_root);
+    model_root_slot() = settled.model_root.c_str();
     say("[prosperoai] storage: access=%d route=%s step=\"%s\" code=%d app=%s data=%s models=%s "
         "moved=%u\n",
         settled.access, settled.route, elevation::step(), elevation::step_code(),

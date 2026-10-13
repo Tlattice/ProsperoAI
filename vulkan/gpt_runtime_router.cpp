@@ -12,6 +12,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdio>
+#include <dirent.h>
 #include <sys/stat.h>
 extern "C"
 {
@@ -107,6 +108,30 @@ void scan()
         }
         if (complete)
             models.push_back({preset.id, preset.name, root, preset.kind, 0});
+    }
+    // User image bundles are discovered by their manifest; hidden staging is excluded.
+    if (DIR *directory = opendir(prospero::model_root()))
+    {
+        while (const dirent *entry = readdir(directory))
+        {
+            const std::string id = entry->d_name;
+            if (id.empty() || id[0] == '.')
+                continue;
+            const std::string root = std::string(prospero::model_root()) + "/" + id;
+            struct stat info
+            {
+            };
+            if (stat(root.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) ||
+                !exists(root + "/model.json"))
+                continue;
+            // Do not bypass completeness checks for curated media bundles.
+            if (std::any_of(std::begin(prospero_model_download::presets),
+                            std::end(prospero_model_download::presets),
+                            [&](const auto &preset) { return id == preset.id; }))
+                continue;
+            models.push_back({id, id, root, kImage, 0});
+        }
+        closedir(directory);
     }
 }
 // Written at every change of model, after the one in memory was let go: with one
